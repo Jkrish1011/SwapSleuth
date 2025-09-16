@@ -1,3 +1,5 @@
 arbitrage-bot-go
 
-arbitrage-bot-go/.DS_Store
+.DS_Store
+
+.env
