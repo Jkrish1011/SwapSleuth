@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,4 +80,13 @@ func BinanceConnector() {
 		fmt.Printf("json marshal: %v", err)
 	}
 	fmt.Println(string(b))
+
+	utils.InitRedis()
+
+	// Push to Redis
+	err = utils.PushOrderbook(context.Background(), normalizedValue)
+	if err != nil {
+		fmt.Printf("error pushing orderbook to Redis: %v\n", err)
+		return
+	}
 }
