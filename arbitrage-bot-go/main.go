@@ -24,7 +24,7 @@ func main() {
 	if err := utils.TestRedisConnection(); err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
-	log.Println("✅ Redis connection successful")
+	log.Println(" Redis connection successful")
 
 	connectors.BinanceConnector()
 	connectors.UniswapConnector()
@@ -33,6 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get orderbook from Redis: %v", err)
 	}
-	log.Printf("✅ Got orderbook from Redis: %v", ob)
+	log.Printf(" Got orderbook from Redis: %v", ob)
 
 }
