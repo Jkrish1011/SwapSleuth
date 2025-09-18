@@ -368,6 +368,7 @@ impl SpreadAnalyzer {
 
             // Fetching the most updated orderbook from redis
             let mut redis_con = self.redis_client.get_connection()?;
+            
             let json_data: String = match redis_con.get(&key) {
                 Ok(data) => data,
                 Err(e) => {

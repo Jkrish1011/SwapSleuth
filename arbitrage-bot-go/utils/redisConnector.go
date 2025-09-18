@@ -22,11 +22,11 @@ func InitRedis() {
 	// Provide default values if environment variables are not set
 	if addr == "" {
 		addr = "localhost:6379"
-		log.Printf("⚠️  REDIS_ADDR not set, using default: %s", addr)
+		log.Printf("REDIS_ADDR not set, using default: %s", addr)
 	}
 
 	if pass == "" {
-		log.Printf("⚠️  REDIS_PASS not set, connecting without password")
+		log.Printf("REDIS_PASS not set, connecting without password")
 	}
 
 	log.Printf("Connecting to Redis at: %s", addr)
@@ -58,7 +58,12 @@ func PushOrderbook(ctx context.Context, ob NormalizationSchema) error {
 		return err
 	}
 
-	log.Printf("✅ Pushed orderbook to Redis: %s", key)
+	err = rdb.Publish(ctx, "orderbook_updates", key).Err()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Pushed and Published orderbook to Redis: %s", key)
 	return nil
 }
 
