@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"log"
+	"time"
 
 	"github.com/Jkrish1011/SwapSleuth/arbitrage-bot-go/connectors"
 	"github.com/Jkrish1011/SwapSleuth/arbitrage-bot-go/utils"
@@ -26,13 +26,16 @@ func main() {
 	}
 	log.Println(" Redis connection successful")
 
-	connectors.BinanceConnector()
-	connectors.UniswapConnector()
-
-	ob, err := utils.GetFromOrderBook(context.Background(), "orderbook:uniswap-v3-exact:WBTC/USDT")
-	if err != nil {
-		log.Fatalf("Failed to get orderbook from Redis: %v", err)
+	for {
+		connectors.BinanceConnector()
+		connectors.UniswapConnector()
+		time.Sleep(5 * time.Second)
 	}
-	log.Printf(" Got orderbook from Redis: %v", ob)
+
+	// ob, err := utils.GetFromOrderBook(context.Background(), "orderbook:uniswap-v3-exact:WBTC/USDT")
+	// if err != nil {
+	// 	log.Fatalf("Failed to get orderbook from Redis: %v", err)
+	// }
+	// log.Printf(" Got orderbook from Redis: %v", ob)
 
 }

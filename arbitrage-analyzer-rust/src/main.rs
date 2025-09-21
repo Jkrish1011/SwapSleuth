@@ -131,8 +131,6 @@ impl SpreadAnalyzer {
             In Arbitrage Context:
             - Taker fees apply when you use market orders (immediate execution)
             - Maker fees apply when you use limit orders (add liquidity to orderbook)
-
-
          */
         let mut total_fees: f64 = 0.0;
 
@@ -205,54 +203,95 @@ impl SpreadAnalyzer {
         conservative_size.min(reasonable_max)
     }
 
+    // Group orderbooks by normalized trading pair for cross-exchange comparison
+    fn group_books_by_pair(&self) -> HashMap<String, Vec<(&String, &OrderBook)>> {
+        let mut group: HashMap<String, Vec<(&String, &OrderBook)>> = HashMap::new();
+
+        for (key, book) in &self.books {
+            // Normalize the pair (e.g., WBTC/USDT -> BTC/USDT)
+            let normalized_pair = book.pair.replace("WBTC", "BTC");
+            group.entry(normalized_pair).or_insert_with(Vec::new).push((key, book));
+        }
+
+        group
+    }
+
+    fn analyze_all_spreads(&self) -> Result<Vec<ArbitrageOpportunity>> {
+        let mut all_opportunities: Vec<ArbitrageOpportunity> = Vec::new();
+
+        // Group orderbooks by normalized trading pair
+        let grouped_books = self.group_books_by_pair();
+
+        debug!("Grouped {} orderbooks by trading pair", grouped_books.len());
+
+        // Analyze each trading pair across all exchanges
+        for (normalized_pair, books) in grouped_books {
+            if books.len() < 2 {
+                // need atleast 2 exchanges to compare
+                continue;
+            }
+
+            debug!("Analyzing {} across {} exchanges", normalized_pair, books.len());
+
+            // Compare every exchange pair for this trading pair
+            for i in 0..books.len() {
+                for j in (i+1)..books.len() {
+                    let (key1, book1) = books[i];
+                    let (key2, book2) = books[j];
+
+                    // Skip if same exchange, 
+                    if book1.exchange == book2.exchange {
+                        continue;
+                    }
+
+                    // Ensure both books have valid data
+                    if book1.bids.is_empty() || book1.asks.is_empty() || book2.bids.is_empty() || book2.asks.is_empty() {
+                        warn!("Empty orderbook found: {} or {}" , key1, key2);
+                        continue;
+                    }
+
+                    // calculate price adjustments for wrapped tokens
+                    let (_, _, price_adjustment) = self.normalize_pair_symbols(&book1.pair, &book2.pair);
+
+                    // Scenario 1: Buy from book1, sell to book2
+                    let buy_price1 = book1.asks[0][0] * price_adjustment;
+                    let buy_size1 = book1.asks[0][1];
+
+                    let sell_price2 = book2.bids[0][0];
+                    let sell_size2 = book2.bids[0][1];
+
+                    if let Some(opp) = self.evaluate_opportunity(
+                        &book1.exchange,
+                        &book2.exchange,
+                        &normalized_pair,
+                        buy_price1,
+                        sell_price2,
+                        buy_size1,
+                        sell_size2
+                    ) {
+                        all_opportunities.push(opp);
+                    }
+                }
+            }
+        }
+
+        // Sort all opportunities by ROI in descending order
+        all_opportunities.sort_by(|a, b| b.roi_percentage.partial_cmp(&a.roi_percentage).unwrap_or(std::cmp::Ordering::Equal));
+        
+        Ok(all_opportunities)
+    }
+
     fn analyze_spread(&mut self, updated_key: &str) -> Result<Vec<ArbitrageOpportunity>> {
-        let mut opportunities: Vec<ArbitrageOpportunity> = Vec::new();
+        let mut all_opportunities: Vec<ArbitrageOpportunity> = self.analyze_all_spreads()?;
 
-        // Get the updated orderbook
-        let updated_book: &OrderBook = self.books.get(updated_key).ok_or_else(|| anyhow!("Orderbook not found for key: {}", updated_key))?;
+        // Filter for opportunities involving the updated exchange/pair
+        let updated_book = self.books.get(updated_key).ok_or_else(|| anyhow!("Orderbook not found for key: {}", updated_key))?;
 
-        debug!("Analyzing spread for updated book: {}", updated_key);
-
-        // Compare with all other books for the same normalized pair
-        for (other_key, other_book) in &self.books {
-            if other_key == updated_key {
-                continue;
-            }
-
-            // Normalize pair symbols for comparison
-            let (norm_pair1, norm_pair2, price_adjustment) = self.normalize_pair_symbols(&updated_book.pair, &other_book.pair);
-
-            if norm_pair1 != norm_pair2 {
-                // Different trading pairs
-                continue;
-            }
-
-            // Ensure both books have bids and asks
-            if updated_book.bids.is_empty() || updated_book.asks.is_empty() || other_book.bids.is_empty() || other_book.asks.is_empty() {
-                warn!("Empty orderbook found: {} or {}", updated_key, other_key);
-                continue;
-            }
-
-            // Scenario 1: Buy from updated_book, sell to other_book
-            let buy_price: f64 = updated_book.asks[0][0] * price_adjustment;
-            let buy_size: f64 = updated_book.asks[0][1];
-            let sell_price: f64 = other_book.bids[0][0];
-            let sell_size: f64 = other_book.bids[0][1];
-
-            if let Some(opp) = self.evaluate_opportunity(
-                &other_book.exchange,
-                &updated_book.exchange,
-                &norm_pair1,
-                buy_price,
-                sell_price,
-                buy_size,
-                sell_size,
-            ) {
-                opportunities.push(opp);
-            }
-        } 
-
-        Ok(opportunities)        
+        let filtered_opportunities = all_opportunities.into_iter().filter(|opp| {
+            opp.buy_exchange == updated_book.exchange || opp.sell_exchange == updated_book.exchange
+        }).collect();
+       
+        Ok(filtered_opportunities)        
     }
 
     fn evaluate_opportunity(
@@ -303,7 +342,33 @@ impl SpreadAnalyzer {
 
     }
 
+    fn print_exchange_stats(&self) {
+        let grouped = self.group_books_by_pair();
+        let exchanges: std::collections::HashSet<String> = self.books.values()
+            .map(|book| book.exchange.clone())
+            .collect();
+        
+        println!("\n MARKET DATA SUMMARY");
+        println!("───────────────────────────────────");
+        println!("  Active Exchanges: {}", exchanges.len());
+        println!("  Trading Pairs: {}", grouped.len());
+        println!("  Total Orderbooks: {}", self.books.len());
+        
+        for exchange in &exchanges {
+            let count = self.books.values().filter(|book| book.exchange == *exchange).count();
+            println!("  - {}: {} pairs", exchange, count);
+        }
+        
+        for (pair, books) in &grouped {
+            if books.len() > 1 {
+                println!("   {}: {} exchanges", pair, books.len());
+            }
+        }
+    }
+
     fn print_analysis_results(&self, opportunities: &[ArbitrageOpportunity]) {
+        // Print exchange statistics first
+        self.print_exchange_stats();
         if opportunities.is_empty() {
             println!(" SPREAD ANALYSIS: No profitable opportunities found");
             return;
@@ -340,6 +405,22 @@ impl SpreadAnalyzer {
         }
     }
 
+    /// Add method for periodic comprehensive analysis (useful for debugging/monitoring)
+    fn run_comprehensive_analysis(&self) -> Result<()> {
+        info!("🔍 Running comprehensive cross-exchange analysis...");
+        
+        let opportunities = self.analyze_all_spreads()?;
+        self.print_analysis_results(&opportunities);
+        
+        if !opportunities.is_empty() {
+            info!("Found {} total arbitrage opportunities", opportunities.len());
+            let best_roi = opportunities.first().map(|o| o.roi_percentage).unwrap_or(0.0);
+            info!("Best ROI: {:.2}%", best_roi);
+        }
+        
+        Ok(())
+    }
+
     fn run(&mut self) -> Result<(), anyhow::Error> {
         info!(" Starting Spread Analysis...");
 
@@ -348,6 +429,10 @@ impl SpreadAnalyzer {
 
         pubsub.subscribe("orderbook_updates")?;
         info!("Subscribed to orderbook_updates channel");
+
+        // Counter for periodic comprehensive analysis
+        let mut update_counter = 0;
+        const COMPREHENSIVE_ANALYSIS_INTERVAL: u32 = 10;
 
 
         // To keep checking for the updates from the channel from redis
@@ -392,29 +477,42 @@ impl SpreadAnalyzer {
 
             info!("Updated orderbook: {} (bids: {}, asks: {})", book_key, orderbook.bids.len(), orderbook.asks.len());
 
-            // Perform spread analysis
-            match self.analyze_spread(&book_key) {
-                Ok(opportunities) => {
-                    self.print_analysis_results(&opportunities);
+            update_counter += 1;
+
+            let opportunities = if update_counter % COMPREHENSIVE_ANALYSIS_INTERVAL == 0 {
+                info!(" Running comprehensive analysis (update #{})...", update_counter);
+                self.analyze_all_spreads()?
+            } else {
+                // Targeted analysis for the updated pair
+                self.analyze_spread(&book_key)?
+            };
+
+
+            if !opportunities.is_empty() {
+                self.print_analysis_results(&opportunities);
+                
+                // Process execution requests
+                for opp in opportunities {
+                    let exec_request = ExecutionRequest {
+                        id: Uuid::new_v4().to_string(),
+                        opportunity: opp.clone(),
+                        execution_size: opp.max_size,
+                        created_at: Utc::now(),
+                    };
                     
-                    // Here you would publish execution requests to Redis
-                    // For now, we just log the intent
-                    for opp in opportunities {
-                        let exec_request = ExecutionRequest {
-                            id: Uuid::new_v4().to_string(),
-                            opportunity: opp.clone(),
-                            execution_size: opp.max_size,
-                            created_at: Utc::now(),
-                        };
-                        
-                        info!("  Would execute: {} (Net: ${:.2}, ROI: {:.2}%)", exec_request.id, opp.net_profit, opp.roi_percentage);
-                        
-                        // TODO: Publish to execution stream
-                        
-                    }
+                    info!("⚡ Would execute: {} (Net: ${:.2}, ROI: {:.2}%)", 
+                          exec_request.id, opp.net_profit, opp.roi_percentage);
+                    
+                    // TODO: Publish to execution stream and test this.
+                    
+                    // let exec_json = serde_json::to_string(&exec_request)?;
+                    // redis_con.publish("execution_requests", exec_json)?;
                 }
-                Err(e) => error!("Spread analysis failed: {}", e),
-            }            
+            } else if update_counter % COMPREHENSIVE_ANALYSIS_INTERVAL == 0 {
+                // Only show "no opportunities" for comprehensive analysis
+                println!("\n Comprehensive analysis complete - no profitable opportunities found");
+            }
+        
         }
     }
 }
