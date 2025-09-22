@@ -10,8 +10,8 @@ use env_logger::Env;
 
 
 // Rust analyzer config constants
-const MIN_ABSOLUTE_PROFIT: f64 = 10.0; // Minimum absolute profit in USDT
-const MIN_ROI_PERCENTAGE: f64 = 0.5; // Minimum ROI percentage
+const MIN_ABSOLUTE_PROFIT: f64 = 1.0; // Minimum absolute profit in USDT
+const MIN_ROI_PERCENTAGE: f64 = 0.1; // Minimum ROI percentage
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct OrderBook {
@@ -217,6 +217,7 @@ impl SpreadAnalyzer {
     }
 
     fn analyze_all_spreads(&self) -> Result<Vec<ArbitrageOpportunity>> {
+        debug!("Analyzing all spreads...");
         let mut all_opportunities: Vec<ArbitrageOpportunity> = Vec::new();
 
         // Group orderbooks by normalized trading pair
@@ -226,8 +227,9 @@ impl SpreadAnalyzer {
 
         // Analyze each trading pair across all exchanges
         for (normalized_pair, books) in grouped_books {
-            if books.len() < 2 {
+            if books.len() < 1 {
                 // need atleast 2 exchanges to compare
+                debug!("Skipping {} with less than 2 exchanges", normalized_pair);
                 continue;
             }
 
@@ -500,8 +502,7 @@ impl SpreadAnalyzer {
                         created_at: Utc::now(),
                     };
                     
-                    info!("⚡ Would execute: {} (Net: ${:.2}, ROI: {:.2}%)", 
-                          exec_request.id, opp.net_profit, opp.roi_percentage);
+                    info!("⚡ Would execute: {} (Net: ${:.2}, ROI: {:.2}%)", exec_request.id, opp.net_profit, opp.roi_percentage);
                     
                     // TODO: Publish to execution stream and test this.
                     
@@ -512,7 +513,6 @@ impl SpreadAnalyzer {
                 // Only show "no opportunities" for comprehensive analysis
                 println!("\n Comprehensive analysis complete - no profitable opportunities found");
             }
-        
         }
     }
 }
@@ -542,8 +542,7 @@ fn main() -> Result<()> {
     analyzer.fees_config.ethereum_gas_cost = 50.0; // Adjust based on current gas prices
     
     info!("   Configuration:");
-    info!("   - Execution Strategy: {}", 
-          if analyzer.fees_config.use_market_orders { "Market Orders (Taker)" } else { "Limit Orders (Maker)" });
+    info!("   - Execution Strategy: {}", if analyzer.fees_config.use_market_orders { "Market Orders (Taker)" } else { "Limit Orders (Maker)" });
     info!("   - Binance Fee: {:.3}%", 
           if analyzer.fees_config.use_market_orders { 
               analyzer.fees_config.binance_taker_fee 
